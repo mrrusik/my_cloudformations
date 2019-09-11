@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template WordPress_Single_Instance: WordPress + RDS
+Parameters:
+  DBName:
+    Default: wordpressdb
+    Description: The WordPress database name
+    Type: String
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBUser:
+    Default: wordpress
+    NoEcho: 'true'
+    Description: The WordPress database admin account username
+    Type: String
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    Default: wordpress1
+    NoEcho: 'true'
+    Description: The WordPress database admin account password
+    Type: String
+    ConstraintDescription: must contain only alphanumeric characters.
+Resources:
+  WebServer:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: ami-05c1fa8df71875112
+      InstanceType: t2.micro
+      KeyName: cfn-key-1
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash -xe
+              sudo apt update
+              sudo apt install -y apache2
+              sudo apt install -y mysql-server
+              sudo apt install -y php libapache2-mod-php php-mysql
+              sudo apt install -y php-curl php-gd php-mbstring php-xml php-xmlrpc php-soap php-intl php-zip
+              sudo systemctl restart apache2
+              sudo touch /etc/apache2/sites-available/wordpress.conf
+              sudo chown  $USER:$USER /etc/apache2/sites-available/wordpress.conf
+              sudo echo "<Directory /var/www/wordpress/>AllowOverride All</Directory>" > /etc/apache2/sites-available/wordpress.conf
+              sudo a2enmod rewrite
+              sudo systemctl restart apache2
+              cd /tmp
+              curl -O https://wordpress.org/latest.tar.gz
+              tar xzvf latest.tar.gz
+              touch /tmp/wordpress/.htaccess
+              cp /tmp/wordpress/wp-config-sample.php /tmp/wordpress/wp-config.php
+              mkdir /tmp/wordpress/wp-content/upgrade
+              sudo sed -i 's/database_name_here/${DBName}/g' /tmp/wordpress/wp-config.php
+              sudo sed -i 's/username_here/${DBUser}/g' /tmp/wordpress/wp-config.php
+              sudo sed -i 's/password_here/${DBPassword}/g' /tmp/wordpress/wp-config.php
+              sudo sed -i 's/localhost/${Addr}/g' /tmp/wordpress/wp-config.php
+              sudo cp -a /tmp/wordpress/. /var/www/wordpress
+              sudo chown -R www-data:www-data /var/www/wordpress
+              sudo find /var/www/wordpress/ -type d -exec chmod 750 {} \;
+              sudo find /var/www/wordpress/ -type f -exec chmod 640 {} \;
+              sudo sed -i 's/\/var\/www\/html/\/var\/www\/wordpress/g' /etc/apache2/sites-available/000-default.conf
+              sudo systemctl restart apache2
+            - Addr: !GetAtt DatabaseInstance.Endpoint.Address
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Enable HTTP access via port 80 locked down to the load balancer + SSH
+        access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+  DatabaseSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Open database for access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          CidrIp: 0.0.0.0/0
+  DatabaseInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBName: !Ref DBName
+      Engine: MySQL
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: db.t2.micro
+      AllocatedStorage: '5'
+      PubliclyAccessible: true
+      VPCSecurityGroups:
+        - !GetAtt DatabaseSG.GroupId
+
+
+Outputs:
+  WebsiteURL:
+    Value: !GetAtt WebServer.PublicIp
+    Description: Public IP
